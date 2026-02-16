@@ -1,0 +1,451 @@
+// ooooooooooo                                         .o8                                  //
+// 8'   888   `8                                        "888                                  //
+//      888      .ooooo.  ooo. .oo.  .oo.    .oooo.   .oooo888   .ooooo.  oooo d8b  .ooooo.  //
+//      888     d88' `88b `888P"Y88bP"Y88b  `P  )88b d88' `888  d88' `88b `888""8P d88' `88b //
+//      888     888   888  888   888   888   .oP"888 888   888  888   888  888     888   888 //
+//      888     888   888  888   888   888  d8(  888 888   888  888   888  888     888   888 //
+//     o888o    `Y8bod8P' o888o o888o o888o `Y888""8o `Y8bod88P" `Y8bod8P' d888b    `Y8bod8P' //
+//
+// POMODORO TIMER - OTA APP VERSION
+// Standalone productivity timer app for Pocket Mage
+
+#include <globals.h>
+#include "esp32-hal-log.h"
+#include "esp_log.h"
+
+// Include fonts for OTA build
+#include <Fonts/FreeMonoBold18pt8b.h>
+#include <Fonts/FreeMonoBold12pt8b.h>
+#include <Fonts/FreeMonoBold24pt8b.h>
+#include <Fonts/FreeMono9pt8b.h>
+
+#if OTA_APP // OTA_APP build
+
+// ===================== POMODORO STATE DEFINITIONS =====================
+enum PomodoroState {
+  POMODORO_IDLE,       // Main menu / timer selection
+  POMODORO_WORK,       // Active work session (25 min)
+  POMODORO_SHORT_BREAK,// Short break (5 min)
+  POMODORO_LONG_BREAK, // Long break after 4 pomodoros (15 min)
+  POMODORO_PAUSED      // Timer paused
+};
+
+PomodoroState currentPomodoroState = POMODORO_IDLE;
+static constexpr const char* TAG = "POMODORO_OTA";
+
+// ===================== TIMER CONSTANTS =====================
+const unsigned long WORK_DURATION = 25 * 60 * 1000;        // 25 minutes in milliseconds
+const unsigned long SHORT_BREAK_DURATION = 5 * 60 * 1000;  // 5 minutes
+const unsigned long LONG_BREAK_DURATION = 15 * 60 * 1000;  // 15 minutes
+const unsigned long POMODOROS_UNTIL_LONG_BREAK = 4;        // Long break after 4 pomodoros
+
+// ===================== TIMER STATE VARIABLES =====================
+unsigned long timerStartMillis = 0;      // When current timer started
+unsigned long timerDuration = 0;         // Duration of current timer
+unsigned long timeRemaining = 0;         // Time remaining in current timer
+unsigned long lastUpdateMillis = 0;      // Last time display was updated
+bool timerRunning = false;               // Is timer currently running
+uint8_t pomodorosCompleted = 0;         // Number of work sessions completed
+int currentMillisKB = 0;                 // Current millis for keyboard
+int currentMillisOLED = 0;               // Current millis for OLED
+
+// ===================== BEEPER JINGLES =====================
+// Work session complete jingle - upbeat to signal break time
+constexpr static const Note workCompleteNotes[] = {
+    {NOTE_C5, 120}, {NOTE_E5, 120}, {NOTE_G5, 120}, {NOTE_C6, 240}
+};
+
+// Break complete jingle - back to work
+constexpr static const Note breakCompleteNotes[] = {
+    {NOTE_G5, 120}, {NOTE_E5, 120}, {NOTE_C5, 240}
+};
+
+// Long break complete jingle - celebration!
+constexpr static const Note longBreakCompleteNotes[] = {
+    {NOTE_C5, 100}, {NOTE_D5, 100}, {NOTE_E5, 100}, {NOTE_F5, 100},
+    {NOTE_G5, 100}, {NOTE_A5, 100}, {NOTE_B5, 100}, {NOTE_C6, 300}
+};
+
+const Jingle WorkComplete = {workCompleteNotes, sizeof(workCompleteNotes) / sizeof(workCompleteNotes[0])};
+const Jingle BreakComplete = {breakCompleteNotes, sizeof(breakCompleteNotes) / sizeof(breakCompleteNotes[0])};
+const Jingle LongBreakComplete = {longBreakCompleteNotes, sizeof(longBreakCompleteNotes) / sizeof(longBreakCompleteNotes[0])};
+
+// ===================== HELPER FUNCTIONS =====================
+
+// Load pomodoro count from SD card
+void loadPomodoroCount() {
+  SDActive = true;
+  pocketmage::setCpuSpeed(240);
+  delay(50);
+
+  File file = SD_MMC.open("/sys/pomodoro.txt", "r");
+  if (!file) {
+    ESP_LOGW(TAG, "No saved pomodoro count found, starting at 0");
+    pomodorosCompleted = 0;
+    if (SAVE_POWER) pocketmage::setCpuSpeed(POWER_SAVE_FREQ);
+    SDActive = false;
+    return;
+  }
+
+  String countStr = file.readStringUntil('\n');
+  pomodorosCompleted = countStr.toInt();
+  ESP_LOGI(TAG, "Loaded pomodoro count: %d", pomodorosCompleted);
+
+  file.close();
+  if (SAVE_POWER) pocketmage::setCpuSpeed(POWER_SAVE_FREQ);
+  SDActive = false;
+}
+
+// Save pomodoro count to SD card
+void savePomodoroCount() {
+  SDActive = true;
+  pocketmage::setCpuSpeed(240);
+  delay(50);
+
+  SD().delFile("/sys/pomodoro.txt");
+  SD().appendToFile("/sys/pomodoro.txt", String(pomodorosCompleted));
+  ESP_LOGI(TAG, "Saved pomodoro count: %d", pomodorosCompleted);
+
+  if (SAVE_POWER) pocketmage::setCpuSpeed(POWER_SAVE_FREQ);
+  SDActive = false;
+}
+
+// Start a timer with specified duration
+void startTimer(unsigned long duration) {
+  timerStartMillis = millis();
+  timerDuration = duration;
+  timeRemaining = duration;
+  timerRunning = true;
+  lastUpdateMillis = millis();
+  newState = true;
+}
+
+// Pause the current timer
+void pauseTimer() {
+  if (timerRunning) {
+    timerRunning = false;
+    currentPomodoroState = POMODORO_PAUSED;
+    newState = true;
+  }
+}
+
+// Resume the paused timer
+void resumeTimer() {
+  if (!timerRunning && currentPomodoroState == POMODORO_PAUSED) {
+    timerStartMillis = millis() - (timerDuration - timeRemaining);
+    timerRunning = true;
+    newState = true;
+  }
+}
+
+// Update timer and check for completion
+void updateTimer() {
+  if (!timerRunning) return;
+
+  unsigned long currentMillis = millis();
+  unsigned long elapsed = currentMillis - timerStartMillis;
+
+  if (elapsed >= timerDuration) {
+    // Timer completed!
+    timerRunning = false;
+    timeRemaining = 0;
+
+    // Handle state transitions and play appropriate jingle
+    switch (currentPomodoroState) {
+      case POMODORO_WORK:
+        pomodorosCompleted++;
+        savePomodoroCount();
+
+        // Determine if long break or short break
+        if (pomodorosCompleted % POMODOROS_UNTIL_LONG_BREAK == 0) {
+          BZ().playJingle(LongBreakComplete);
+          OLED().oledWord("Long Break Time!");
+          delay(1000);
+          currentPomodoroState = POMODORO_LONG_BREAK;
+          startTimer(LONG_BREAK_DURATION);
+        } else {
+          BZ().playJingle(WorkComplete);
+          OLED().oledWord("Break Time!");
+          delay(1000);
+          currentPomodoroState = POMODORO_SHORT_BREAK;
+          startTimer(SHORT_BREAK_DURATION);
+        }
+        break;
+
+      case POMODORO_SHORT_BREAK:
+      case POMODORO_LONG_BREAK:
+        BZ().playJingle(BreakComplete);
+        OLED().oledWord("Back to Work!");
+        delay(1000);
+        currentPomodoroState = POMODORO_WORK;
+        startTimer(WORK_DURATION);
+        break;
+
+      default:
+        currentPomodoroState = POMODORO_IDLE;
+        newState = true;
+        break;
+    }
+  } else {
+    timeRemaining = timerDuration - elapsed;
+
+    // Update display every second
+    if (currentMillis - lastUpdateMillis >= 1000) {
+      lastUpdateMillis = currentMillis;
+      newState = true;
+    }
+  }
+}
+
+// Format time as MM:SS string
+String formatTime(unsigned long milliseconds) {
+  unsigned long totalSeconds = milliseconds / 1000;
+  unsigned long minutes = totalSeconds / 60;
+  unsigned long seconds = totalSeconds % 60;
+
+  String timeStr = "";
+  if (minutes < 10) timeStr += "0";
+  timeStr += String(minutes);
+  timeStr += ":";
+  if (seconds < 10) timeStr += "0";
+  timeStr += String(seconds);
+
+  return timeStr;
+}
+
+// ===================== OTA APP ENTRY POINTS =====================
+
+void APP_INIT() {
+  currentPomodoroState = POMODORO_IDLE;
+  timerRunning = false;
+  EINK().forceSlowFullUpdate(true);
+  loadPomodoroCount();
+  newState = true;
+  ESP_LOGI(TAG, "Pomodoro OTA app initialized");
+
+  // Play startup jingle
+  BZ().playJingle(Jingles::Startup);
+}
+
+void processKB_APP() {
+  OLED().setPowerSave(false);
+  currentMillisKB = millis();
+  disableTimeout = false;
+
+  // Update timer state
+  updateTimer();
+
+  char inchar;
+
+  switch (currentPomodoroState) {
+    case POMODORO_IDLE:
+      KB().setKeyboardState(FUNC);
+
+      if (currentMillisKB - KBBounceMillis >= KB_COOLDOWN) {
+        inchar = KB().updateKeypress();
+
+        if (inchar == 0); // No key pressed
+
+        // BACKSPACE - Exit to PocketMage OS
+        else if (inchar == 127 || inchar == 8 || inchar == 12) {
+          OLED().oledWord("Exiting...");
+          delay(500);
+          // Set reboot flag to return to OS
+          if (!pocketmage::setRebootFlagOTA()) {
+            return;
+          }
+          display.setFullWindow();
+          pocketmage::deepSleep();
+        }
+
+        // '1' - Start work session
+        else if (inchar == '1') {
+          currentPomodoroState = POMODORO_WORK;
+          startTimer(WORK_DURATION);
+          OLED().oledWord("Work Started!");
+          delay(500);
+        }
+
+        // '2' - Start short break
+        else if (inchar == '2') {
+          currentPomodoroState = POMODORO_SHORT_BREAK;
+          startTimer(SHORT_BREAK_DURATION);
+          OLED().oledWord("Break Started!");
+          delay(500);
+        }
+
+        // '3' - Start long break
+        else if (inchar == '3') {
+          currentPomodoroState = POMODORO_LONG_BREAK;
+          startTimer(LONG_BREAK_DURATION);
+          OLED().oledWord("Long Break!");
+          delay(500);
+        }
+
+        // 'R' - Reset pomodoro count
+        else if (inchar == 'r' || inchar == 'R') {
+          pomodorosCompleted = 0;
+          savePomodoroCount();
+          OLED().oledWord("Count Reset!");
+          delay(500);
+          newState = true;
+        }
+
+        KBBounceMillis = currentMillisKB;
+      }
+      break;
+
+    case POMODORO_WORK:
+    case POMODORO_SHORT_BREAK:
+    case POMODORO_LONG_BREAK:
+    case POMODORO_PAUSED:
+      KB().setKeyboardState(FUNC);
+
+      if (currentMillisKB - KBBounceMillis >= KB_COOLDOWN) {
+        inchar = KB().updateKeypress();
+
+        if (inchar == 0); // No key pressed
+
+        // BACKSPACE - Stop timer and return to idle
+        else if (inchar == 127 || inchar == 8 || inchar == 12) {
+          timerRunning = false;
+          currentPomodoroState = POMODORO_IDLE;
+          OLED().oledWord("Timer Stopped");
+          delay(500);
+          EINK().forceSlowFullUpdate(true);
+          newState = true;
+        }
+
+        // SPACE or ENTER - Pause/Resume timer
+        else if (inchar == ' ' || inchar == 13) {
+          if (currentPomodoroState == POMODORO_PAUSED) {
+            resumeTimer();
+            OLED().oledWord("Resumed");
+            delay(500);
+          } else {
+            pauseTimer();
+            OLED().oledWord("Paused");
+            delay(500);
+          }
+        }
+
+        // 'R' - Reset current timer
+        else if (inchar == 'r' || inchar == 'R') {
+          if (currentPomodoroState == POMODORO_WORK ||
+              (currentPomodoroState == POMODORO_PAUSED && timerDuration == WORK_DURATION)) {
+            startTimer(WORK_DURATION);
+          } else if (currentPomodoroState == POMODORO_SHORT_BREAK ||
+                     (currentPomodoroState == POMODORO_PAUSED && timerDuration == SHORT_BREAK_DURATION)) {
+            startTimer(SHORT_BREAK_DURATION);
+          } else if (currentPomodoroState == POMODORO_LONG_BREAK ||
+                     (currentPomodoroState == POMODORO_PAUSED && timerDuration == LONG_BREAK_DURATION)) {
+            startTimer(LONG_BREAK_DURATION);
+          }
+          OLED().oledWord("Timer Reset");
+          delay(500);
+        }
+
+        KBBounceMillis = currentMillisKB;
+      }
+      break;
+  }
+
+  // Update OLED with current status
+  currentMillisOLED = millis();
+  if (currentMillisOLED - OLEDFPSMillis >= (1000/OLED_MAX_FPS)) {
+    OLEDFPSMillis = currentMillisOLED;
+    if (timerRunning) {
+      OLED().oledWord(formatTime(timeRemaining));
+    }
+  }
+}
+
+void einkHandler_APP() {
+  switch (currentPomodoroState) {
+    case POMODORO_IDLE:
+      if (newState) {
+        newState = false;
+        EINK().resetDisplay();
+
+        // Draw title
+        display.setFont(&FreeMonoBold18pt8b);
+        display.setCursor(40, 40);
+        display.print("POMODORO TIMER");
+
+        // Draw menu options
+        display.setFont(&FreeMono9pt8b);
+        display.setCursor(40, 80);
+        display.print("1 - Work Session (25min)");
+        display.setCursor(40, 105);
+        display.print("2 - Short Break (5min)");
+        display.setCursor(40, 130);
+        display.print("3 - Long Break (15min)");
+        display.setCursor(40, 155);
+        display.print("R - Reset Count");
+
+        // Draw pomodoro count
+        display.setFont(&FreeMonoBold12pt8b);
+        display.setCursor(40, 190);
+        display.print("Completed: ");
+        display.print(pomodorosCompleted);
+
+        EINK().drawStatusBar("Select (1-3), Reset (R), Exit (ESC)");
+        EINK().refresh();
+      }
+      break;
+
+    case POMODORO_WORK:
+    case POMODORO_SHORT_BREAK:
+    case POMODORO_LONG_BREAK:
+    case POMODORO_PAUSED:
+      if (newState) {
+        newState = false;
+        EINK().resetDisplay();
+
+        // Draw state indicator
+        display.setFont(&FreeMonoBold12pt8b);
+        display.setCursor(10, 30);
+        if (currentPomodoroState == POMODORO_WORK) {
+          display.print("WORK SESSION");
+        } else if (currentPomodoroState == POMODORO_SHORT_BREAK) {
+          display.print("SHORT BREAK");
+        } else if (currentPomodoroState == POMODORO_LONG_BREAK) {
+          display.print("LONG BREAK");
+        } else if (currentPomodoroState == POMODORO_PAUSED) {
+          display.print("PAUSED");
+        }
+
+        // Draw large timer
+        display.setFont(&FreeMonoBold24pt8b);
+        String timeStr = formatTime(timeRemaining);
+        int16_t x1, y1;
+        uint16_t w, h;
+        display.getTextBounds(timeStr, 0, 0, &x1, &y1, &w, &h);
+        display.setCursor((320 - w) / 2, 120);
+        display.print(timeStr);
+
+        // Draw progress bar
+        int progressWidth = (int)((float)(timerDuration - timeRemaining) / timerDuration * 280);
+        display.drawRect(20, 150, 280, 20, GxEPD_BLACK);
+        display.fillRect(20, 150, progressWidth, 20, GxEPD_BLACK);
+
+        // Draw pomodoro count
+        display.setFont(&FreeMono9pt8b);
+        display.setCursor(20, 190);
+        display.print("Pomodoros: ");
+        display.print(pomodorosCompleted);
+
+        // Status bar
+        if (currentPomodoroState == POMODORO_PAUSED) {
+          EINK().drawStatusBar("Resume (SPACE), Reset (R), Stop (ESC)");
+        } else {
+          EINK().drawStatusBar("Pause (SPACE), Reset (R), Stop (ESC)");
+        }
+
+        EINK().refresh();
+      }
+      break;
+  }
+}
+
+#endif // OTA_APP
