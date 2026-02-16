@@ -1,0 +1,65 @@
+[QUEST]
+id=1
+name=Rat Problem
+desc=Clear 5 rats from Crystal Caves
+type=0
+target=2
+count=5
+gold=50
+item=1
+xp=30
+
+[QUEST]
+id=2
+name=Goblin Menace
+desc=Defeat 3 goblins in the warrens
+type=0
+target=4
+count=3
+gold=80
+item=7
+xp=50
+
+[QUEST]
+id=3
+name=Spider Silk
+desc=Slay 4 spiders for silk thread
+type=0
+target=7
+count=4
+gold=60
+item=2
+xp=40
+
+[QUEST]
+id=4
+name=Undead Patrol
+desc=Destroy 5 skeletons
+type=0
+target=6
+count=5
+gold=100
+item=12
+xp=70
+
+[QUEST]
+id=5
+name=Dragon Slayer
+desc=Defeat the Crystal Dragon
+type=0
+target=15
+count=1
+gold=300
+item=20
+xp=200
+
+[QUEST]
+id=6
+name=Shadow Hunt
+desc=Defeat the Shadow Knight
+type=0
+target=14
+count=1
+gold=200
+item=15
+xp=150

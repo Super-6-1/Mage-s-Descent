@@ -1,0 +1,179 @@
+[ITEM]
+id=1
+name=Herb
+type=0
+value=10
+stat1=15
+stat2=0
+desc=Restores 15 HP
+
+[ITEM]
+id=2
+name=Antidote
+type=0
+value=8
+stat1=10
+stat2=0
+desc=Cures poison and heals 10 HP
+
+[ITEM]
+id=3
+name=Ether
+type=0
+value=25
+stat1=0
+stat2=10
+desc=Restores 10 MP
+
+[ITEM]
+id=4
+name=Hi-Potion
+type=0
+value=50
+stat1=40
+stat2=0
+desc=Restores 40 HP
+
+[ITEM]
+id=5
+name=Elixir
+type=0
+value=120
+stat1=60
+stat2=20
+desc=Restores 60 HP and 20 MP
+
+[ITEM]
+id=6
+name=Rusty Sword
+type=1
+value=30
+stat1=3
+stat2=0
+desc=A worn blade, still sharp enough
+
+[ITEM]
+id=7
+name=Iron Sword
+type=1
+value=80
+stat1=6
+stat2=0
+desc=Solid iron blade
+
+[ITEM]
+id=8
+name=Steel Blade
+type=1
+value=180
+stat1=10
+stat2=0
+desc=Fine steel craftsmanship
+
+[ITEM]
+id=9
+name=War Axe
+type=1
+value=250
+stat1=14
+stat2=0
+desc=Heavy but devastating
+
+[ITEM]
+id=10
+name=Mage Staff
+type=1
+value=200
+stat1=5
+stat2=8
+desc=Boosts magic power
+
+[ITEM]
+id=11
+name=Leather Armor
+type=2
+value=40
+stat1=3
+stat2=0
+desc=Basic protection
+
+[ITEM]
+id=12
+name=Chain Mail
+type=2
+value=120
+stat1=6
+stat2=0
+desc=Linked metal rings
+
+[ITEM]
+id=13
+name=Plate Armor
+type=2
+value=280
+stat1=10
+stat2=0
+desc=Heavy plate protection
+
+[ITEM]
+id=14
+name=Mage Robe
+type=2
+value=150
+stat1=4
+stat2=5
+desc=Enchanted robe, boosts magic
+
+[ITEM]
+id=15
+name=Dragon Scale
+type=2
+value=500
+stat1=14
+stat2=0
+desc=Armor from dragon scales
+
+[ITEM]
+id=16
+name=Speed Ring
+type=3
+value=100
+stat1=0
+stat2=4
+desc=Increases agility
+
+[ITEM]
+id=17
+name=Power Amulet
+type=3
+value=150
+stat1=3
+stat2=3
+desc=Boosts attack and speed
+
+[ITEM]
+id=18
+name=Magic Pendant
+type=3
+value=180
+stat1=0
+stat2=5
+desc=Amplifies magic power
+
+[ITEM]
+id=19
+name=Shield Charm
+type=3
+value=130
+stat1=4
+stat2=2
+desc=Adds defense and speed
+
+[ITEM]
+id=20
+name=Dragon Fang
+type=3
+value=400
+stat1=5
+stat2=6
+desc=Legendary dragon tooth relic

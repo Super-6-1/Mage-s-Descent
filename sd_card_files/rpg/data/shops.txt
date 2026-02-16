@@ -1,0 +1,9 @@
+[SHOP]
+id=1
+name=General Store
+items=1,2,4,6,7,11,12,16
+
+[SHOP]
+id=2
+name=Magic Shop
+items=3,5,10,14,17,18
